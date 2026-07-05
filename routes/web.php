@@ -1,22 +1,16 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\OcrController;
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
-| be assigned to the "web" middleware group. Make something great!
-|
-*/
+
 
 Route::get('/', function () {
-    return view('welcome');
+    return view('ocr_dashboard');
+});
 
-Route::get('/camera', function () {
-    return view('camera');
-});
-});
+
+Route::post('/proses-ocr', [OcrController::class, 'prosesOcr'])->name('proses.ocr');
+
+
+Route::post('/download-dokumen', [OcrController::class, 'downloadDokumen'])->name('download.dokumen');
