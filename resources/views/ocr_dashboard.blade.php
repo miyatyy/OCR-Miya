@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Miya OCR - Pastel Dashboard</title>
+    <title>Miya OCR - Pastel Dashboard (AI Engine)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/tesseract.js@v3.0.3/dist/tesseract.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Poppins', sans-serif; background-color: #F3F0EC; }
@@ -19,12 +18,21 @@
 <body class="min-h-screen flex flex-col items-center justify-center p-6 text-gray-700">
 
     <div class="w-full max-w-5xl bg-white rounded-3xl shadow-xl p-8 border border-amber-100">
-        <div class="text-center mb-8">
-            <h1 class="text-3xl font-bold text-slate-600 tracking-wide">✨ Miya OCR App ✨</h1>
-            <p class="text-sm text-slate-400 mt-1">Ubah gambar atau jepretan kamera menjadi berbagai format dokumen pilihanmu</p>
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-bold text-slate-600 tracking-wide">✨ Miya OCR App (Super AI) ✨</h1>
+            <p class="text-sm text-slate-400 mt-1">Mendukung pembacaan tulisan cetak, kaligrafi, dan gaya tulisan tangan apa pun secara akurat</p>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="flex gap-2 justify-center mb-8 border-b border-slate-100 pb-4">
+            <button onclick="switchTab('ocr')" id="tabOcr" class="px-5 py-2 rounded-full font-semibold text-xs transition-all bg-amber-100 text-amber-700 shadow-sm">
+                🧠 Miya AI Tools
+            </button>
+            <button onclick="switchTab('merge')" id="tabMerge" class="px-5 py-2 rounded-full font-semibold text-xs transition-all text-slate-400 hover:bg-slate-50">
+                📄 Gabungkan PDF
+            </button>
+        </div>
+
+        <div id="sectionOcr" class="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div class="flex flex-col gap-6">
                 <div class="flex gap-4 justify-center">
                     <button id="btnModeCamera" onclick="switchMode('camera')" class="px-5 py-2.5 rounded-full font-semibold border-2 border-dashed border-purple-300 bg-purple-50 hover:bg-purple-100 transition-all text-xs">📷 Mode Kamera</button>
@@ -45,12 +53,11 @@
                 </div>
 
                 <div id="loading" class="hidden text-center text-xs font-semibold text-purple-400 animate-pulse">
-                    🔮 Memproses OCR via Mesin Browser, mohon tunggu...
+                    🔮 Menghubungkan ke Mesin Cloud AI, memindai gaya tulisan...
                 </div>
             </div>
 
             <div class="flex flex-col bg-slate-50 rounded-2xl p-6 border border-slate-100 gap-6">
-                
                 <div id="previewContainer" class="hidden flex flex-col gap-3">
                     <h4 class="text-xs font-semibold text-slate-500">🖼️ Gambar Hasil Jepretan / File:</h4>
                     <img id="imagePreview" class="w-full max-h-40 object-contain rounded-xl border border-slate-200 shadow-sm bg-white" src="" alt="Pratinjau">
@@ -87,14 +94,151 @@
                         </form>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div id="sectionMerge" class="hidden flex flex-col items-center justify-center p-4">
+            <div class="w-full max-w-2xl bg-slate-50 border border-slate-200 rounded-2xl p-6">
+                <h3 class="font-bold text-lg text-slate-600 text-center mb-2">📂 Gabungkan Dokumen PDF</h3>
+                <p class="text-xs text-slate-400 text-center mb-6">Pilih 2 file atau lebih berkas PDF lokal untuk disatukan menjadi satu file utuh.</p>
+                
+                <form id="dashboardMergeForm" onsubmit="submitMergeForm(event)" enctype="multipart/form-data">
+                    @csrf
+                    <div onclick="document.getElementById('dashboardPdfFiles').click()" class="border-2 border-dashed border-red-300 hover:bg-red-50/50 bg-white rounded-xl p-8 text-center cursor-pointer transition-all">
+                        <span class="text-3xl block mb-2">📄✨</span>
+                        <span class="px-5 py-2 bg-red-100 text-red-600 rounded-full text-xs font-semibold shadow-sm inline-block">Pilih Berkas PDF</span>
+                        <p class="text-[11px] text-slate-400 mt-2">Mendukung unggahan multi-file sekaligus</p>
+                        <input type="file" name="pdf_files[]" id="dashboardPdfFiles" class="hidden" multiple accept="application/pdf" onchange="previewDashboardPdf()">
+                    </div>
+
+                    <div id="dashPdfPreviewArea" class="hidden mt-5">
+                        <h4 class="text-xs font-semibold text-slate-500 mb-2">📋 Daftar Dokumen Terpilih:</h4>
+                        <div id="dashPdfList" class="flex flex-col gap-2 max-h-40 overflow-y-auto pr-1"></div>
+                        
+                        <button type="submit" id="btnStartMerge" class="w-full mt-4 py-2.5 text-center text-xs font-semibold rounded-xl pastel-pink text-red-700 shadow-sm hover:opacity-90 transition-all">
+                            🔗 Mulai Penggabungan Dokumen
+                        </button>
+                    </div>
+                </form>
+
+                <div id="mergeLoading" class="hidden text-center text-xs font-semibold text-red-400 animate-pulse my-4">
+                    ⏳ Sedang menyatukan halaman berkas PDF kamu, mohon tunggu...
+                </div>
+
+                <div id="visualPreviewArea" class="hidden flex flex-col gap-4 mt-2">
+                    <h4 class="text-xs font-semibold text-slate-500 text-center">👁️ Pratinjau Visual Hasil Gabungan:</h4>
+                    
+                    <iframe id="pdfIframePreview" class="w-full h-96 rounded-xl border border-slate-200 shadow-inner bg-white"></iframe>
+                    
+                    <p class="text-[11px] text-slate-400 text-center">Apakah hasil penggabungan di atas sudah sesuai?</p>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <button type="button" onclick="resetMergeSelection()" class="py-2.5 text-center text-xs font-semibold rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-600 transition-all">
+                            ❌ Atur Ulang Pilihan
+                        </button>
+                        <a id="btnDownloadAcc" href="#" download class="py-2.5 text-center text-xs font-semibold rounded-xl pastel-green text-green-700 shadow-sm hover:opacity-90 transition-all block">
+                            📥 ACC & Download File
+                        </a>
+                    </div>
+                </div>
 
             </div>
         </div>
+
     </div>
 
     <script>
         let streamActive = null;
         let currentBase64Image = "";
+
+        function switchTab(tab) {
+            document.getElementById('sectionOcr').classList.add('hidden');
+            document.getElementById('sectionMerge').classList.add('hidden');
+            
+            document.getElementById('tabOcr').className = "px-5 py-2 rounded-full font-semibold text-xs transition-all text-slate-400 hover:bg-slate-50";
+            document.getElementById('tabMerge').className = "px-5 py-2 rounded-full font-semibold text-xs transition-all text-slate-400 hover:bg-slate-50";
+
+            if (tab === 'ocr') {
+                document.getElementById('sectionOcr').classList.remove('hidden');
+                document.getElementById('tabOcr').className = "px-5 py-2 rounded-full font-semibold text-xs transition-all bg-amber-100 text-amber-700 shadow-sm";
+            } else if (tab === 'merge') {
+                document.getElementById('sectionMerge').classList.remove('hidden');
+                document.getElementById('tabMerge').className = "px-5 py-2 rounded-full font-semibold text-xs transition-all bg-red-100 text-red-700 shadow-sm";
+                stopWebcam();
+            }
+        }
+
+        function previewDashboardPdf() {
+            const input = document.getElementById('dashboardPdfFiles');
+            const previewArea = document.getElementById('dashPdfPreviewArea');
+            const fileList = document.getElementById('dashPdfList');
+            fileList.innerHTML = '';
+
+            if (input.files.length > 0) {
+                previewArea.classList.remove('hidden');
+                for (let i = 0; i < input.files.length; i++) {
+                    const file = input.files[i];
+                    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+                    const div = document.createElement('div');
+                    div.className = "flex justify-content border justify-between p-2.5 bg-white border-slate-200 rounded-xl text-xs";
+                    div.innerHTML = `<span class="truncate max-w-xs text-slate-600 font-medium">📄 ${file.name}</span><span class="text-slate-400 text-[10px]">${sizeMb} MB</span>`;
+                    fileList.appendChild(div);
+                }
+            } else {
+                previewArea.classList.add('hidden');
+            }
+        }
+
+        // DISISIPKAN HEADER KEAMANAN CSRF UNTUK MENGHINDARI ERROR 419 PAGE EXPIRED
+        function submitMergeForm(e) {
+            e.preventDefault();
+            
+            const form = document.getElementById('dashboardMergeForm');
+            const formData = new FormData(form);
+            
+            document.getElementById('mergeLoading').classList.remove('hidden');
+            document.getElementById('btnStartMerge').disabled = true;
+
+            fetch('/proses-merge-pdf', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('mergeLoading').classList.add('hidden');
+                document.getElementById('btnStartMerge').disabled = false;
+                
+                if (data.success) {
+                    form.classList.add('hidden');
+                    document.getElementById('visualPreviewArea').classList.remove('hidden');
+                    document.getElementById('pdfIframePreview').src = data.file_url;
+                    
+                    const downloadBtn = document.getElementById('btnDownloadAcc');
+                    downloadBtn.href = data.file_url;
+                    downloadBtn.setAttribute('download', data.file_name);
+                } else {
+                    alert(data.message || "Gagal menggabungkan dokumen PDF.");
+                }
+            })
+            .catch(err => {
+                document.getElementById('mergeLoading').classList.add('hidden');
+                document.getElementById('btnStartMerge').disabled = false;
+                alert("Terjadi kesalahan transmisi jaringan sistem.");
+            });
+        }
+
+        function resetMergeSelection() {
+            document.getElementById('dashboardPdfFiles').value = "";
+            document.getElementById('dashPdfList').innerHTML = "";
+            document.getElementById('dashPdfPreviewArea').classList.add('hidden');
+            document.getElementById('pdfIframePreview').src = "";
+            
+            document.getElementById('visualPreviewArea').classList.add('hidden');
+            document.getElementById('dashboardMergeForm').classList.remove('hidden');
+        }
 
         function switchMode(mode) {
             document.getElementById('cameraArea').classList.add('hidden');
@@ -184,45 +328,10 @@
             printWindow.document.close();
         }
 
-        // Solusi Tunggal Anti-Gagal: Konversi Format Office MHTML untuk Menyematkan Gambar secara Permanen
         function convertImageToWord() {
             if (!currentBase64Image) return alert("Belum ada gambar yang diproses.");
-
             const contentBase64 = currentBase64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-            
-            // Membuat Dokumen XML MHTML Resmi Microsoft Word
-            const mhtmlContent = 
-`MIME-Version: 1.0
-Content-Type: multipart/related; boundary="NEXT_PART_BOUNDARY"
-
---NEXT_PART_BOUNDARY
-Content-Type: text/html; charset="utf-8"
-Content-Location: main.html
-
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-    body { font-family: Arial, sans-serif; text-align: center; margin: 40px; }
-    h2 { color: #4a5568; }
-</style>
-</head>
-<body>
-    <h2>Berkas Hasil Kloning Gambar Miya OCR</h2>
-    <hr/><br/>
-    <p><img src="image.png" width="450" style="width:450px; max-width:100%; text-align:center;" /></p>
-</body>
-</html>
-
---NEXT_PART_BOUNDARY
-Content-Type: image/png
-Content-Transfer-Encoding: base64
-Content-Location: image.png
-
-${contentBase64}
---NEXT_PART_BOUNDARY--`;
-
+            const mhtmlContent = `MIME-Version: 1.0\nContent-Type: multipart/related; boundary=\"NEXT_PART_BOUNDARY\"\n\n--NEXT_PART_BOUNDARY\nContent-Type: text/html; charset=\"utf-8\"\nContent-Location: main.html\n\n<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><h2>Berkas Hasil Kloning Gambar Miya OCR</h2><hr/><br/><p><img src=\"image.png\" width=\"450\" /></p></body></html>\n\n--NEXT_PART_BOUNDARY\nContent-Type: image/png\nContent-Transfer-Encoding: base64\nContent-Location: image.png\n\n${contentBase64}\n--NEXT_PART_BOUNDARY--`;
             const blob = new Blob([mhtmlContent], { type: 'application/msword' });
             const downloadLink = document.createElement('a');
             downloadLink.href = URL.createObjectURL(blob);
@@ -237,24 +346,33 @@ ${contentBase64}
             document.getElementById('textContainer').classList.add('hidden');
             document.getElementById('resultText').value = "";
 
-            Tesseract.recognize(
-                imageSource,
-                'eng+ind',
-                { logger: m => console.log(m) }
-            ).then(({ data: { text } }) => {
+            fetch('/proses-ocr', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({ image_base64: imageSource })
+            })
+            .then(res => res.json())
+            .then(data => {
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('textContainer').classList.remove('hidden');
                 
-                const cleanText = text.trim();
-                document.getElementById('resultText').value = cleanText ? cleanText : "[Tidak ada teks terdeteksi]";
-                
-                const textInputs = document.getElementsByClassName('formTextClass');
-                for(let i=0; i<textInputs.length; i++) {
-                    textInputs[i].value = cleanText;
+                if (data.success) {
+                    document.getElementById('resultText').value = data.text;
+                    
+                    const textInputs = document.getElementsByClassName('formTextClass');
+                    for(let i=0; i<textInputs.length; i++) {
+                        textInputs[i].value = data.text;
+                    }
+                } else {
+                    document.getElementById('resultText').value = "[Eror: " + data.error + "]";
                 }
-            }).catch(err => {
+            })
+            .catch(err => {
                 document.getElementById('loading').classList.add('hidden');
-                alert("Mesin gagal mengekstrak tulisan: " + err.message);
+                alert("Gagal berkomunikasi dengan server backend.");
             });
         }
     </script>
