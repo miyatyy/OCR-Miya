@@ -3,155 +3,146 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use App\Models\OcrHistory;
 
 class OcrController extends Controller
 {
+    // 1. Menampilkan Halaman Dashboard Utama & Riwayat
+    public function index()
+    {
+        $histories = OcrHistory::latest()->get();
+        return view('ocr_dashboard', compact('histories'));
+    }
+
+    // 2. Memproses Ekstraksi Gambar Menggunakan Google Gemini API Secara Nyata
     public function prosesOcr(Request $request)
     {
-        // 1. Validasi input Base64 dari Frontend
-        if (!$request->has('image_base64')) {
-            return response()->json(['success' => false, 'error' => 'Tidak ada gambar yang diterima.'], 400);
+        if (!$request->has('image_base64') || empty($request->image_base64)) {
+            return response()->json(['success' => false, 'error' => 'Berkas gambar biner tidak ditemukan.']);
         }
 
         try {
-            $rawBase64 = $request->input('image_base64');
-            $mimeType = 'image/png'; // Default MIME type jika tidak terdeteksi
-            $base64Data = '';
-
-            // Metode Ekstraksi Kuat: Memecah string Base64 berdasarkan tanda koma agar terhindar dari Error 400 Bad Request
-            if (str_contains($rawBase64, ',')) {
-                $parts = explode(',', $rawBase64);
-                
-                // Ambil informasi MIME type asli dari bagian metadata pertama
-                if (preg_match('/^data:(image\/\w+);base64$/', trim($parts[0]), $matches)) {
-                    $mimeType = $matches[1];
-                }
-                
-                // Ambil data biner base64 murni di bagian kedua
-                $base64Data = $parts[1];
-            } else {
-                // Jika data dari frontend dikirim tanpa menyertakan header biner data URL
-                $base64Data = $rawBase64;
+            $rawBase64 = $request->image_base64;
+            
+            // Deteksi MimeType Gambar
+            $mimeType = 'image/png';
+            if (str_contains($rawBase64, 'data:image/jpeg') || str_contains($rawBase64, 'data:image/jpg')) {
+                $mimeType = 'image/jpeg';
             }
 
-            // Bersihkan spasi atau baris baru ilegal yang berpotensi merusak enkripsi data gambar
-            $base64Data = trim(str_replace(["\r", "\n", " "], "", $base64Data));
+            // Ekstrak data biner bersih dari string base64
+            $cleanBase64 = preg_replace('/^data:image\/\w+;base64,/', '', $rawBase64);
+            $cleanBase64 = str_replace([' ', "\r", "\n"], ['+', '', ''], $cleanBase64);
 
-            // Dapatkan API Key Gemini dari file .env
-            $apiKey = env('GEMINI_API_KEY');
-            if (empty($apiKey)) {
-                return response()->json(['success' => false, 'error' => 'GEMINI_API_KEY belum di-setting di file .env'], 500);
-            }
+            // 🎯 PENGIKAT KUNCI ABSOLUT: Menggunakan Kunci Resmi Milik Nurmiyaty Langsung dari Google AI Studio
+            $apiKey = env('GEMINI_API_KEY', 'AQ.Ab8RN6Kslb21KPhM84HneWSmCB-Nadm5iLWC2JKn6pz7LFl2qw'); 
+            
+            // URL Endpoint Google Gemini 1.5 Flash Resmi
+            $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . $apiKey;
 
-            // 2. Hubungkan ke Endpoint Resmi Google Gemini API (Menggunakan v1 Stabil dan model gemini-2.5-flash)
-            $url = 'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=' . $apiKey;
-
-            // Prompt Cerdas untuk mendukung multi-fungsi aplikasi Miya OCR
-            $promptText = "Kamu adalah sistem AI handal untuk aplikasi multi-fungsi bernama Miya OCR. "
-                        . "Tugasmu:\n"
-                        . "1. Jika gambar berisi tulisan (cetak maupun tulisan tangan), ekstraklah kata demi kata secara sangat akurat sesuai teks aslinya.\n"
-                        . "2. Jika gambar berupa kode QRIS atau Barcode, bacalah data string manifes di dalamnya secara mentah.\n"
-                        . "3. Jika gambar berupa objek umum atau pemandangan, deskripsikan objek itu secara singkat.\n"
-                        . "Keluarkan hasil data/teks langsung secara bersih tanpa kalimat pembuka atau basa-basi.";
-
-            // Menyusun struktur payload sesuai dokumentasi JSON Google Gemini API
-            $payload = json_encode([
+            // Payload Multimodal resmi untuk Google Vision API
+            $payload = [
                 "contents" => [
                     [
                         "parts" => [
-                            ["text" => $promptText],
+                            [
+                                "text" => "Tolong baca tulisan yang ada di dalam gambar ini secara sangat akurat dan ketik ulang seluruh hasilnya tanpa ada tambahan kalimat penjelasan atau komentar pembuka apa pun."
+                            ],
                             [
                                 "inlineData" => [
                                     "mimeType" => $mimeType,
-                                    "data" => $base64Data
+                                    "data" => $cleanBase64
                                 ]
                             ]
                         ]
                     ]
-                ],
-                "generationConfig" => [
-                    "temperature" => 0.2
                 ]
-            ]);
+            ];
 
-            // 3. Eksekusi Request Menggunakan cURL bawaan PHP
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-            
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            
-            if (curl_errno($ch)) {
-                throw new \Exception(curl_error($ch));
-            }
-            curl_close($ch);
+            // Mengirimkan request ke server Google Cloud dengan bypass SSL lokal Windows XAMPP secara sempurna
+            $response = Http::withoutVerifying()
+                            ->withHeaders(['Content-Type' => 'application/json'])
+                            ->timeout(45)
+                            ->post($url, $payload);
 
-            if ($httpCode !== 200) {
-                // Membantu proses debug jika terdapat kegagalan validasi dari server Google
-                $errorDetail = json_decode($response, true);
-                $errorMessage = $errorDetail['error']['message'] ?? 'Kesalahan tidak dikenal pada repositori API.';
-                return response()->json(['success' => false, 'error' => "Google Gemini API Error ({$httpCode}): {$errorMessage}"], 500);
-            }
+            if ($response->successful()) {
+                $result = $response->json();
+                
+                // Menembus struktur JSON Candidates milik Google Gemini API
+                $extractedText = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                $extractedText = trim($extractedText);
+                
+                if (!empty($extractedText)) {
+                    // Menyimpan data asli ke database lokal MariaDB
+                    $history = OcrHistory::create([
+                        'image_base64' => $rawBase64,
+                        'extracted_text' => $extractedText
+                    ]);
 
-            $result = json_decode($response, true);
-            
-            // 4. Ambil Konten Hasil Analisis Ekstraksi dari Response Gemini
-            $extractedResult = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
-
-            if (empty(trim($extractedResult))) {
-                return response()->json([
-                    'success' => false, 
-                    'error' => 'Gemini AI gagal memproses atau mengekstrak gambar ini.'
-                ], 500);
+                    return response()->json([
+                        'success' => true,
+                        'text' => $extractedText,
+                        'html_row' => $this->renderHistoryRow($history)
+                    ]);
+                }
             }
 
-            return response()->json([
-                'success' => true,
-                'text' => trim($extractedResult)
-            ]);
+            // Jika API merespon tapi ada kesalahan parameter atau kuota limits harian
+            $apiErrorMessage = $response->json()['error']['message'] ?? 'Respons API Google Studio tidak dikenali.';
+            return response()->json(['success' => false, 'error' => 'API Google Menolak: ' . $apiErrorMessage]);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Terjadi kesalahan sistem: ' . $e->getMessage()
-            ], 500);
+            // Mengembalikan pesan eror transmisi secara transparan ke browser
+            return response()->json(['success' => false, 'error' => 'Kendala Jaringan Jembatan: ' . $e->getMessage()]);
         }
     }
 
+    // 3. Menghapus Item Riwayat via AJAX
+    public function hapusHistory($id)
+    {
+        $history = OcrHistory::find($id);
+        if ($history) { 
+            $history->delete(); 
+            return response()->json(['success' => true]); 
+        }
+        return response()->json(['success' => false]);
+    }
+
+    // 4. Memproses Konversi Ekspor File Dokumen (TXT & Word)
     public function downloadDokumen(Request $request)
     {
         $text = $request->input('text', '');
         $type = $request->input('type', 'txt');
-        $base64Image = $request->input('image_base64', '');
-        $formattedText = nl2br(e($text));
-        $filename = "Hasil_MiyaOCR_" . time();
+        $filename = "MiyaOCR_Export_" . time();
 
-        // Download: Gambar Convert Ke Word (.doc) via Laravel Fallback
-        if ($type === 'img_word') {
-            $headers = ["Content-type" => "application/vnd.ms-word", "Content-Disposition" => "attachment;Filename=" . $filename . "_Gambar.doc"];
-            $content = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><body style='text-align:center; padding:20px;'><h2>Berkas Hasil Convert Gambar</h2><hr/><br/><img src='{$base64Image}' style='max-width:100%;'/></body></html>";
-            return response($content, 200, $headers);
+        if ($type === 'txt') {
+            return response($text, 200)
+                ->header('Content-Type', 'text/plain; charset=utf-8')
+                ->header('Content-Disposition', 'attachment; filename="' . $filename . '.txt"');
         }
-
-        // Download: Teks Murni Convert Ke Word (.doc)
         if ($type === 'word') {
-            $headers = ["Content-type" => "application/vnd.ms-word", "Content-Disposition" => "attachment;Filename=" . $filename . "_Teks.doc"];
-            $content = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><body style='font-family: Arial; padding: 20px;'><h2>Hasil Ekstraksi/Analisis Multi-Fungsi</h2><hr/><p>$formattedText</p></body></html>";
-            return response($content, 200, $headers);
-        } 
-        
-        // Download: Teks Murni Convert Ke PDF (.pdf)
-        if ($type === 'pdf') {
-            $headers = ["Content-type" => "application/pdf", "Content-Disposition" => "attachment; filename=" . $filename . "_Teks.pdf"];
-            $content = "%PDF-1.4\n1 0 obj\n<< /Title (Hasil Analisis Gambar) >>\nendobj\n2 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n3 0 obj\n<< /Type /Pages /Kids [4 0 R] /Count 1 >>\nendobj\n4 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] /Contents 5 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\nendobj\n5 0 obj\n<< /Length 100 >>\nstream\nBT\n/F1 12 Tf\n50 800 Td\n(" . iconv('UTF-8', 'ASCII//TRANSLIT', str_replace(["\r", "\n"], " ", $text)) . ") Tj\nET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f\n0000000009 00000 n\n0000000054 00000 n\n0000000103 00000 n\n0000000164 00000 n\n0000000327 00000 n\ntrailer\n<< /Size 6 /Root 2 0 R >>\nstartxref\n0000000477\n%%EOF";
-            return response($content, 200, $headers);
-        } 
+            $wordTemplate = "<html><head><meta charset='utf-8'></head><body><p>" . nl2br(e($text)) . "</p></body></html>";
+            return response($wordTemplate, 200)
+                ->header('Content-Type', 'application/msword')
+                ->header('Content-Disposition', 'attachment; filename="' . $filename . '.doc"');
+        }
+    }
 
-        // Download Default: File Teks Biasa (.txt)
-        $headers = ["Content-type" => "text/plain", "Content-Disposition" => "attachment; filename=" . $filename . ".txt"];
-        return response($text, 200, $headers);
+    // Komponen baris log riwayat scan UI
+    private function renderHistoryRow($history)
+    {
+        $safeText = str_replace(["\r", "\n"], '\n', addslashes($history->extracted_text));
+        return '
+        <div id="history-row-'.$history->id.'" class="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl text-xs shadow-sm">
+            <div class="flex items-center gap-3 truncate max-w-xs">
+                <img src="'.$history->image_base64.'" class="w-10 h-10 object-cover rounded-lg border border-slate-200">
+                <p class="truncate text-slate-600 font-medium">'.(e(substr($history->extracted_text, 0, 40)) ?: "[Gambar Tanpa Teks]").'...</p>
+            </div>
+            <div class="flex gap-1">
+                <button onclick="loadHistoryToText(`'.$safeText.'`,`'.$history->image_base64.'`)" class="p-1 px-2.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg font-semibold transition-all">Muat</button>
+                <button onclick="deleteHistory('.$history->id.')" class="p-1 px-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition-all">Hapus</button>
+            </div>
+        </div>';
     }
 }

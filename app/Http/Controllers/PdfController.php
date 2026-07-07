@@ -7,7 +7,7 @@ use setasign\Fpdi\Fpdi;
 
 class PdfController extends Controller
 {
-    // Fungsi untuk menampilkan halaman form upload PDF
+    // Fungsi untuk menampilkan halaman form upload PDF (Merge)
     public function showMergePage()
     {
         return view('merge-pdf');
@@ -110,6 +110,119 @@ class PdfController extends Controller
             return response()->json([
                 'success' => false, 
                 'message' => 'Terjadi kesalahan struktur dokumen: Salah satu file PDF yang diunggah dilindungi kata sandi atau versinya terlalu tinggi bagi parser standar.'
+            ]);
+        }
+    }
+
+    // --- FITUR SPLIT PDF ---
+
+    // Fungsi untuk menampilkan halaman form split PDF
+    public function showSplitPage()
+    {
+        return view('split-pdf');
+    }
+
+    // Fungsi inti untuk memproses pemisahan halaman PDF dengan penanganan presisi tinggi
+    public function processSplit(Request $request)
+    {
+        // 1. Validasi Input
+        $request->validate([
+            'pdf_file' => 'required|mimes:pdf|max:20480', // Maksimal 20MB
+            'pages' => 'required' // Format input: "1" atau "1-3" atau "1,3,5"
+        ], [
+            'pdf_file.required' => 'Silakan pilih file PDF yang ingin dipisahkan.',
+            'pdf_file.mimes' => 'Berkas yang diunggah harus berformat PDF.',
+            'pdf_file.max' => 'Ukuran file PDF maksimal adalah 20MB.',
+            'pages.required' => 'Silakan masukkan nomor halaman yang ingin dipisahkan.'
+        ]);
+
+        try {
+            $file = $request->file('pdf_file');
+            
+            // Proteksi file kosong/rusak
+            if ($file->getSize() <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File PDF yang diunggah kosong atau rusak (0.00 MB).'
+                ]);
+            }
+
+            $filePath = $file->getPathname();
+            $pdf = new Fpdi();
+            
+            // Hitung total halaman asli dokumen
+            $pageCount = $pdf->setSourceFile($filePath);
+            
+            // 2. Parsing/Pecah input halaman dari user (Contoh: "1-3,5" menjadi array [1,2,3,5])
+            $targetPages = [];
+            $inputPages = explode(',', $request->pages);
+
+            foreach ($inputPages as $part) {
+                $part = trim($part);
+                if (str_contains($part, '-')) {
+                    // Jika formatnya jangkauan halaman (range), misal: 1-3
+                    list($start, $end) = explode('-', $part);
+                    $start = (int)trim($start);
+                    $end = (int)trim($end);
+                    
+                    for ($p = $start; $p <= $end; $p++) {
+                        if ($p >= 1 && $p <= $pageCount) {
+                            $targetPages[] = $p;
+                        }
+                    }
+                } else {
+                    // Jika formatnya angka tunggal biasa, misal: 5
+                    $p = (int)$part;
+                    if ($p >= 1 && $p <= $pageCount) {
+                        $targetPages[] = $p;
+                    }
+                }
+            }
+
+            // Hilangkan duplikasi nomor halaman jika user salah input berulang
+            $targetPages = array_unique($targetPages);
+            sort($targetPages);
+
+            if (empty($targetPages)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomor halaman yang kamu masukkan tidak valid untuk dokumen ini (Total: ' . $pageCount . ' halaman).'
+                ]);
+            }
+
+            // 3. Proses ekstraksi halaman dengan penentuan dimensi lembar secara manual & presisi
+            foreach ($targetPages as $page) {
+                $templateId = $pdf->importPage($page);
+                $size = $pdf->getTemplateSize($templateId);
+                
+                // Tambahkan halaman baru dengan orientasi & dimensi lembar aslinya
+                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                
+                // Tempelkan template dengan penguncian skala koordinat (mengatasi error fatal rendering)
+                $pdf->useTemplate($templateId, 0, 0, $size['width'], $size['height'], true);
+            }
+
+            // 4. Simpan file PDF baru hasil pemisahan secara sementara
+            $filename = "MiyaPDF_Split_" . time() . ".pdf";
+            $tempFolder = public_path('temp_pdf');
+            
+            if (!file_exists($tempFolder)) {
+                mkdir($tempFolder, 0777, true);
+            }
+
+            $pdf->Output('F', $tempFolder . '/' . $filename);
+
+            return response()->json([
+                'success' => true,
+                'file_url' => asset('temp_pdf/' . $filename),
+                'file_name' => $filename,
+                'message' => 'Berhasil memisahkan ' . count($targetPages) . ' halaman!'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memproses Split PDF: ' . $e->getMessage()
             ]);
         }
     }
